@@ -470,6 +470,9 @@ export const api = {
   // browser view
   browserControl: (thread: string, body: BrowserControl) =>
     request<{ url: string; title: string; hold?: HoldEvent | null }>(`/api/browser/${encodeURIComponent(thread)}/control`, json(body)),
+  /** a live-view sidebar attached ({on:true}) or detached; the server streams fresh frames while >0 watchers */
+  browserLive: (thread: string, on: boolean) =>
+    request<{ viewers: number }>(`/api/browser/${encodeURIComponent(thread)}/live`, json({ on })),
   // push
   push: () => request<PushInfo>("/api/push"),
   pushSubscribe: (subscription: Record<string, unknown>) => request<PushInfo>("/api/push/subscribe", json({ subscription })),

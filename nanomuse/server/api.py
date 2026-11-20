@@ -1847,6 +1847,23 @@ def create_app(settings: Settings, service: MuseService | None = None) -> FastAP
             headers={"Cache-Control": "private, max-age=86400, immutable"},
         )
 
+    @app.get("/api/browser/{thread_id}/live.jpg", dependencies=dep)
+    async def browser_live_frame(thread_id: str) -> Response:
+        """The newest live-view picture for the sidebar; 404 when none yet."""
+        jpeg = svc.browser_live_frame(thread_id)
+        if jpeg is None:
+            raise HTTPException(404, "no live frame yet")
+        return Response(content=jpeg, media_type="image/jpeg",
+                        headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/browser/{thread_id}/live", dependencies=dep)
+    async def browser_live_set(thread_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """A web-console sidebar attached ({on: true}) or detached ({on: false})."""
+        _thread_or_404(thread_id)
+        on = bool(body.get("on"))
+        viewers = svc.browser_live_viewers(thread_id, 1 if on else -1)
+        return {"viewers": viewers}
+
     @app.post("/api/browser/{thread_id}/control", dependencies=dep)
     async def browser_control(thread_id: str, body: BrowserControlBody) -> dict[str, Any]:
         _thread_or_404(thread_id)

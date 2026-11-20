@@ -1473,11 +1473,27 @@ class MuseService:
         if tool is not None:
             tool.on_frame = self.ui.on_browser_frame
             tool.link = self.phone
+            self.ui.app_browser_add_viewer = tool.add_live_viewer
 
     def browser_backend(self) -> str:
         """Where the browser renders now: "playwright", "device", or "" for nowhere."""
         tool = self.browser
         return tool.backend_kind if tool is not None else ""
+
+    def browser_live_frame(self, thread: str) -> bytes | None:
+        """The newest live-view screenshot (the web sidebar's stream)."""
+        return self.ui.browser_live_frame(thread)
+
+    def browser_live_viewers(self, thread: str, delta: int) -> int:
+        """A sidebar attached or detached; returns the watcher count."""
+        tool = self.browser
+        if tool is None:
+            return 0
+        try:
+            return tool.add_live_viewer(delta)
+        except Exception as exc:  # noqa: BLE001 - the loop is best-effort
+            logger.debug("browser live viewer: {}", exc)
+            return tool.live_viewers()
 
     async def browser_control(self, thread: str, body: dict[str, Any]) -> dict[str, Any]:
         """The user takes over the agent's browser from the app (tap, type, open a URL).

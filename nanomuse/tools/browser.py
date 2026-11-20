@@ -27,6 +27,7 @@ from urllib.parse import urljoin, urlparse
 from pydantic import PrivateAttr
 
 from nanomuse.agent.holds import HAND_OVER_TIMEOUT_S, took_over_note
+from nanomuse.background import spawn
 from nanomuse.logger import logger
 from nanomuse.schema import RiskLevel, ToolResult
 from nanomuse.tools.base import BaseTool, CallAssessment
@@ -200,6 +201,9 @@ class Browser(BaseTool):
     _user_actions: list[str] = PrivateAttr(default_factory=list)
     # the host of the page last summarised, for the Sentinel's view of the next action
     _last_host: str | None = PrivateAttr(default=None)
+    # how many app clients watch the live sidebar (web console); the loop runs while > 0
+    _live_viewers: int = PrivateAttr(default=0)
+    _live_task: Any = PrivateAttr(default=None)
 
     # ------------------------------------------------------------------ lifecycle
     @property
@@ -311,6 +315,67 @@ class Browser(BaseTool):
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("browser frame listener failed: {}", exc)
+
+    # ------------------------------------------------------------------ live view
+    def live_viewers(self) -> int:
+        return self._live_viewers
+
+    def add_live_viewer(self, delta: int) -> int:
+        """A web-console sidebar attached (+1) or detached (-1); starts/stops the loop."""
+        self._live_viewers = max(0, self._live_viewers + delta)
+        if self._live_viewers > 0:
+            self._ensure_live_loop()
+        else:
+            self._stop_live_loop()
+        return self._live_viewers
+
+    def _ensure_live_loop(self) -> None:
+        if self._live_task is not None and not self._live_task.done():
+            return
+        self._live_task = spawn(self._live_loop(), "browser live view")
+
+    def _stop_live_loop(self) -> None:
+        task = self._live_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._live_task = None
+
+    async def _live_loop(self) -> None:
+        """Screenshots into on_frame while someone watches, without touching the agent."""
+        interval = 0.7
+        while self._live_viewers > 0:
+            try:
+                backend = self._backend
+                if backend is None or not backend.open:
+                    await asyncio.sleep(0.8)
+                    continue
+                if self.lock.locked():
+                    # the agent (or the user) is mid-action; its own _frame lands right after
+                    await asyncio.sleep(0.35)
+                    continue
+                jpeg = await backend.screenshot(50)
+                url = await backend.url()
+                title = await backend.title()
+                self.on_frame(
+                    BrowserFrame(
+                        url,
+                        title,
+                        "Live view",
+                        jpeg,
+                        False,
+                        None,
+                        backend=backend.kind,
+                        width=backend.profile.width,
+                        height=backend.profile.height,
+                    )
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - a closed page or a slow site
+                logger.debug("browser live view: {}", exc)
+                await asyncio.sleep(1.0)
+            else:
+                await asyncio.sleep(interval)
 
     async def _label(self, backend: BrowserBackend, index: int) -> str:
         try:
